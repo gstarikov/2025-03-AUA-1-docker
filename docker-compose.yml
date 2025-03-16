@@ -1,0 +1,58 @@
+services:
+  pg:
+    image: postgres:17.4-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U user -d db" ]
+      interval: 1s
+      timeout: 1s
+      retries: 1
+
+  app:
+    build:
+      context: .
+      dockerfile_inline: |
+        # Use the official Golang image for building
+        FROM golang:1.24-alpine3.21 AS builder
+        WORKDIR /app
+        VOLUME /go/pkg/mod
+        VOLUME /root/.cache/go-build
+        COPY . .
+        RUN go mod tidy && go build -o main ./... && ls -lh
+        
+        # Use a minimal base image for running
+        FROM alpine:3.21
+        WORKDIR /root/
+        RUN apk add --no-cache curl
+        COPY --from=builder /app/main .
+        RUN chmod +x /root/main
+        CMD ["/root/main"]
+    depends_on:
+      pg:
+        condition: service_healthy
+    environment:
+      PG: postgres://user:pass@pg:5432/db?sslmode=disable
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app
+      - go_cache:/go/pkg/mod
+      - go_build_cache:/root/.cache/go-build
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/self-check"]
+      interval: 1s
+      timeout: 1s
+      retries: 1
+
+volumes:
+  postgres_data:
+  go_cache:
+  go_build_cache:
